@@ -365,6 +365,41 @@ class TdlibUserbot:
         return None
 
     # ─────────────────────────────────────────
+    # User info helper
+    # ─────────────────────────────────────────
+
+    async def _get_user_fullname(self, user_id: int) -> str:
+        """
+        Resolve a Telegram user_id to a human-readable name via TDLib getUser.
+        Returns "FirstName LastName (@username)" where available.
+        Falls back to str(user_id) if the request fails.
+        """
+        try:
+            result = await self._raw_request(
+                {"@type": "getUser", "user_id": user_id},
+                timeout=10.0,
+            )
+            if result.get("@type") == "error":
+                return str(user_id)
+            first = result.get("first_name") or ""
+            last  = result.get("last_name")  or ""
+            uname = result.get("username")   or ""
+            # Try usernames list as well (TDLib 1.8+)
+            if not uname:
+                usernames = result.get("usernames") or {}
+                if isinstance(usernames, dict):
+                    active = usernames.get("active_usernames") or []
+                    if active:
+                        uname = active[0]
+            fullname = " ".join(filter(None, [first, last]))
+            if uname:
+                fullname = f"{fullname} (@{uname})" if fullname else f"@{uname}"
+            return fullname or str(user_id)
+        except Exception as e:
+            logger.debug("_get_user_fullname(%d) failed: %s", user_id, e)
+            return str(user_id)
+
+    # ─────────────────────────────────────────
     # Gift functions (unchanged)
     # ─────────────────────────────────────────
 
@@ -667,11 +702,12 @@ class TdlibUserbot:
                 # Register new user if needed
                 user_in_db = usersdb_cls.get(user_id=author_id)
                 if user_in_db is None:
-                    usersdb_cls.add(user_id=author_id, user_fullname=str(author_id))
-                    logger.info("New user tracked via TDLib: user_id=%d", author_id)
+                    resolved_name = await self._get_user_fullname(author_id)
+                    usersdb_cls.add(user_id=author_id, user_fullname=resolved_name)
+                    logger.info("New user tracked via TDLib: user_id=%d name=%s", author_id, resolved_name)
                     try:
                         msg_text = new_user_fmt.format(
-                            user_fullname_escaped=escape(str(author_id)),
+                            user_fullname_escaped=escape(resolved_name),
                             user_id=author_id,
                         )
                         await aiogram_bot.send_message(notify_user_id, msg_text, parse_mode="html")
@@ -693,10 +729,12 @@ class TdlibUserbot:
                 if _is_self_destruct(msg_d):
                     logger.info("🔥 Self-destructing message from chat_id=%d — forwarding now", chat_id)
                     user_in_db2 = usersdb_cls.get(user_id=author_id)
-                    fullname = (
-                        user_in_db2.get("user_fullname", str(author_id)) if isinstance(user_in_db2, dict)
-                        else str(author_id)
-                    )
+                    if isinstance(user_in_db2, dict):
+                        fullname = user_in_db2.get("user_fullname") or await self._get_user_fullname(author_id)
+                    elif user_in_db2:
+                        fullname = getattr(user_in_db2, "user_fullname", None) or await self._get_user_fullname(author_id)
+                    else:
+                        fullname = await self._get_user_fullname(author_id)
                     await _forward_self_destruct(msg_d, fullname, author_id)
 
             except Exception:
@@ -739,10 +777,12 @@ class TdlibUserbot:
                 new_tdlib_fid, new_media_type = _extract_tdlib_file(new_content)
 
                 user_in_db = usersdb_cls.get(user_id=chat_id)
-                user_fullname = (
-                    user_in_db.get("user_fullname", str(chat_id)) if isinstance(user_in_db, dict)
-                    else (getattr(user_in_db, "user_fullname", str(chat_id)) if user_in_db else str(chat_id))
-                )
+                if isinstance(user_in_db, dict):
+                    user_fullname = user_in_db.get("user_fullname") or await self._get_user_fullname(chat_id)
+                elif user_in_db:
+                    user_fullname = getattr(user_in_db, "user_fullname", None) or await self._get_user_fullname(chat_id)
+                else:
+                    user_fullname = await self._get_user_fullname(chat_id)
 
                 message_timestamp = (
                     __import__("datetime").datetime
@@ -799,10 +839,12 @@ class TdlibUserbot:
                     return
 
                 user_in_db = usersdb_cls.get(user_id=chat_id)
-                user_fullname = (
-                    user_in_db.get("user_fullname", str(chat_id)) if isinstance(user_in_db, dict)
-                    else (getattr(user_in_db, "user_fullname", str(chat_id)) if user_in_db else str(chat_id))
-                )
+                if isinstance(user_in_db, dict):
+                    user_fullname = user_in_db.get("user_fullname") or await self._get_user_fullname(chat_id)
+                elif user_in_db:
+                    user_fullname = getattr(user_in_db, "user_fullname", None) or await self._get_user_fullname(chat_id)
+                else:
+                    user_fullname = await self._get_user_fullname(chat_id)
 
                 for msg_id in message_ids:
                     user_msg = messagesx_cls.get(user_id=chat_id, message_id=msg_id)
