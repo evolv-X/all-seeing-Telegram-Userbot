@@ -268,9 +268,67 @@ class TdlibUserbot:
         )
         self.client: Client | None = None
 
+    @staticmethod
+    def _make_tty_input(prompt: str, *, secured: bool = False) -> str:
+        """
+        Read a line from the controlling terminal directly.
+        Works on macOS/Linux even when sys.stdin is redirected or buffered oddly.
+        Falls back to sys.stdin on Windows (no os.ctermid there).
+        """
+        import sys
+        import os
+
+        # Flush all outputs first so the prompt is visible
+        sys.stdout.write(f"\n{prompt} ")
+        sys.stdout.flush()
+        try:
+            sys.stderr.flush()
+        except Exception:
+            pass
+
+        try:
+            if secured:
+                import getpass
+                return getpass.getpass(prompt="")
+            # Open the controlling terminal directly (works on macOS/Linux)
+            tty_path = os.ctermid()  # '/dev/tty' on Unix
+            with open(tty_path, "r") as tty:
+                return tty.readline().strip()
+        except (AttributeError, OSError):
+            # Windows or no controlling terminal — fall back to sys.stdin
+            return sys.stdin.readline().strip()
+
+    def _patch_auth_input(self) -> None:
+        """
+        Monkey-patch aiotdlib Client auth helpers so input() works on macOS.
+        Must be called after self.client is created but before __aenter__.
+        """
+        import asyncio
+        from types import MethodType
+
+        client = self.client
+        make_tty = self._make_tty_input
+
+        async def _patched_auth_get_code(self_, *, code_type: str = "SMS") -> str:  # noqa: N807
+            code = ""
+            while len(code) != 5 or not code.isdigit():
+                code = await asyncio.to_thread(make_tty, f"Enter {code_type} code:")
+            return code
+
+        async def _patched_auth_get_password(self_) -> str:  # noqa: N807
+            password = self_.settings.password
+            if not bool(password):
+                return await asyncio.to_thread(make_tty, "Enter 2FA password:", secured=True)
+            return password.get_secret_value()
+
+        client._auth_get_code = MethodType(_patched_auth_get_code, client)
+        client._auth_get_password = MethodType(_patched_auth_get_password, client)
+        logger.debug("Auth input patched for reliable TTY reading")
+
     async def start(self) -> None:
         """Start TDLib client (triggers auth on first run)."""
         self.client = Client(settings=self._settings)
+        self._patch_auth_input()
         self._ctx = self.client.__aenter__()
         await self._ctx
         me = await self.client.api.get_me()
