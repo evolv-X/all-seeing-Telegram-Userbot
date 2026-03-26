@@ -15,6 +15,8 @@ A Telegram userbot that monitors your private chats and notifies you about **edi
 | 🖼️ **Full media support** | Photo, video, voice, video note, animation, sticker, document, audio |
 | 🔥 **Self-destruct messages** | Immediately downloads and forwards timer-deleted / view-once media |
 | 👤 **New user detection** | Notifies you when a new person messages you for the first time |
+| 📱 **QR-code login** | Default auth method — scan once in Telegram, no SMS needed |
+| 🌑 **Offline mode** | Account stays offline while the bot runs — no online indicator shown |
 | 🌍 **Multilingual** | English and Russian built-in; easy to add more |
 | 🚫 **No Business required** | Works on any Telegram account, no Premium/Business subscription needed |
 
@@ -97,6 +99,7 @@ api_hash    = "YOUR_API_HASH"
 phone       = "+7XXXXXXXXXX"
 password    = ""         ; 2FA password, leave empty if none
 tdjson_path = "/opt/homebrew/lib/libtdjson.dylib"  ; path to tdjson library
+auth_mode   = "qr"      ; qr (default) | code — login via QR scan or SMS code
 ```
 
 > **How to find your user ID:** Send `/start` to your bot, or use [@userinfobot](https://t.me/userinfobot).
@@ -122,7 +125,11 @@ pip install -r requirements.txt
 python main.py
 ```
 
-> **First run:** TDLib will ask for your phone number and the confirmation code from Telegram. The session is saved locally and reused on subsequent runs.
+> **First run — QR mode (default):** A QR code is printed in the terminal. Open Telegram on your phone → **Settings → Devices → Link Desktop Device** and scan it. The session is saved locally and reused on subsequent runs.
+>
+> **First run — code mode** (`auth_mode = "code"` in config): TDLib sends a confirmation code to your Telegram app or via SMS. Enter it when prompted.
+>
+> 🌑 **Offline mode:** The account stays offline while the bot is running — no online status is shown to your contacts.
 
 ---
 
