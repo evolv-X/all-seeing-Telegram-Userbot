@@ -38,6 +38,14 @@ class UnknownUpdate:
         self.ID = data.get("@type", "unknownUpdate")
         self.EXTRA = data.get("@extra") or {}
 
+    def __getattr__(self, name: str):
+        # Allow aiotdlib internals (e.g. client_cache) to access fields like
+        # .chat_id, .message_id, etc. directly from the raw data dict.
+        try:
+            return self.data[name]
+        except KeyError:
+            raise AttributeError(f"'UnknownUpdate' object has no attribute '{name}'")
+
 
 def _safe_parse_tdlib_object(data):
     if isinstance(data, dict):
@@ -401,6 +409,17 @@ class TdlibUserbot:
         await self._ctx
         me = await self.client.api.get_me()
         logger.info("TDLib userbot logged in as %s (id=%d)", me.first_name, me.id)
+
+        # Stay offline: undo the online=True that aiotdlib sets during auth
+        try:
+            await self._raw_request({
+                "@type": "setOption",
+                "name": "online",
+                "value": {"@type": "optionValueBoolean", "value": False},
+            })
+            logger.info("Account set to offline mode")
+        except Exception as e:
+            logger.warning("Failed to set offline mode: %s", e)
 
     async def stop(self) -> None:
         """Gracefully close TDLib client."""
