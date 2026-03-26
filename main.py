@@ -193,6 +193,8 @@ async def main() -> None:
     phone       = tdlib_cfg["phone"].strip('"')
     password    = tdlib_cfg.get("password", "").strip('"')
     tdjson_path = tdlib_cfg["tdjson_path"].strip('"')
+    auth_mode   = tdlib_cfg.get("auth_mode", "qr").strip('"').lower()
+    use_qr      = auth_mode != "code"  # anything other than "code" → QR
 
     # ── Init and start userbot ──
     userbot = init_userbot(
@@ -202,7 +204,7 @@ async def main() -> None:
         password=password,
         tdjson_path=tdjson_path,
     )
-    await userbot.start()
+    await userbot.start(use_qr=use_qr)
 
     # ── Register message-tracking handlers ──
     userbot.register_message_tracking_handlers(

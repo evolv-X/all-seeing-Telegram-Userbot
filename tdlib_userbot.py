@@ -298,9 +298,11 @@ class TdlibUserbot:
             # Windows or no controlling terminal — fall back to sys.stdin
             return sys.stdin.readline().strip()
 
-    def _patch_auth_input(self) -> None:
+    def _patch_auth_input(self, use_qr: bool = True) -> None:
         """
         Monkey-patch aiotdlib Client auth helpers so input() works on macOS.
+        use_qr=True  → intercept WaitPhoneNumber and request QR auth instead.
+        use_qr=False → use normal phone number / SMS code flow.
         Must be called after self.client is created but before __aenter__.
         """
         import asyncio
@@ -332,37 +334,69 @@ class TdlibUserbot:
             state_id = getattr(authorization_state, "ID", type(authorization_state).__name__)
             logger.info("TDLib auth state: %s", state_id)
 
-            # TDLib 1.8+ may default to QR login; aiotdlib has no handler for it
-            # → it silently hangs forever and Telegram never sends SMS/app code
+            # QR mode: intercept phone-number request → switch to QR auth
+            if use_qr and state_id == "authorizationStateWaitPhoneNumber":
+                logger.info("auth_mode=qr: requesting QR code authentication")
+                try:
+                    from aiotdlib.api import RequestQrCodeAuthentication
+                    await self_.send(RequestQrCodeAuthentication(other_user_ids=[]))
+                except Exception as e:
+                    logger.warning("requestQrCodeAuthentication failed (%s), falling back to phone", e)
+                    await _orig_on_auth_state(authorization_state)
+                return
+
+            # Handle QR link (both modes: TDLib 1.8+ may send this regardless)
             if state_id == "authorizationStateWaitOtherDeviceConfirmation":
-                link = getattr(authorization_state, "link", "")
-                sys.stdout.write(
-                    "\n"
-                    "⚠️  TDLib is requesting QR-code login.\n"
-                    "    Telegram did NOT send an SMS — it wants you to scan a QR code\n"
-                    "    in another Telegram session (phone/desktop).\n"
-                )
+                link = getattr(authorization_state, "link", "") or ""
                 if link:
-                    sys.stdout.write(f"    Link: {link}\n")
-                sys.stdout.write(
-                    "\n"
-                    "    If you want SMS instead, delete the TDLib session directory\n"
-                    "    (.aiotdlib/) and restart.  On first run without a cached session\n"
-                    "    Telegram sends the code to the Telegram app, not SMS.\n"
-                    "\n"
-                )
-                sys.stdout.flush()
-                return  # don't call original — it has no handler and would hang
+                    TdlibUserbot._print_qr(link)
+                else:
+                    sys.stdout.write("\n📱 QR login requested but no link received from TDLib.\n")
+                    sys.stdout.flush()
+                return  # TDLib sends READY when scanned — no further action needed
 
             await _orig_on_auth_state(authorization_state)
 
         client._on_authorization_state_update = MethodType(_patched_on_auth_state, client)
-        logger.debug("Auth input + state handler patched for reliable TTY reading")
+        logger.debug("Auth input patched (use_qr=%s)", use_qr)
 
-    async def start(self) -> None:
-        """Start TDLib client (triggers auth on first run)."""
+    @staticmethod
+    def _print_qr(link: str) -> None:
+        """Print QR code + link to stdout. Clears terminal first so refreshed codes replace the old one."""
+        import sys
+        import os
+        from datetime import datetime
+
+        # Clear terminal so each refresh replaces the previous QR
+        if sys.stdout.isatty():
+            os.system("cls" if os.name == "nt" else "clear")
+
+        refreshed_at = datetime.now().strftime("%H:%M:%S")
+        sys.stdout.write(f"\n📱 Scan in Telegram → Settings → Devices → Link Desktop Device  [{refreshed_at}]\n\n")
+
+        try:
+            import qrcode
+            qr = qrcode.QRCode(border=1)
+            qr.add_data(link)
+            qr.make(fit=True)
+            qr.print_ascii(out=sys.stdout, invert=True)
+            sys.stdout.write("\n")
+        except ImportError:
+            pass  # qrcode not installed — just show the link below
+
+        # Always print the raw link so user can open/copy it if QR is inconvenient
+        sys.stdout.write(f"🔗 Link: {link}\n")
+        sys.stdout.write("⏳ QR refreshes automatically every ~30s. Scan whenever ready.\n")
+        sys.stdout.flush()
+
+    async def start(self, use_qr: bool = True) -> None:
+        """Start TDLib client (triggers auth on first run).
+
+        Args:
+            use_qr: If True (default), use QR-code auth. If False, use phone/SMS code.
+        """
         self.client = Client(settings=self._settings)
-        self._patch_auth_input()
+        self._patch_auth_input(use_qr=use_qr)
         self._ctx = self.client.__aenter__()
         await self._ctx
         me = await self.client.api.get_me()

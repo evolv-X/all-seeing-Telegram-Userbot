@@ -2,3 +2,4 @@ pydantic
 aiogram
 pytz
 aiotdlib
+qrcode

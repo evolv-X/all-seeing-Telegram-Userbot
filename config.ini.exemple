@@ -14,3 +14,5 @@ api_hash   = ""
 phone      = "+7**********"
 password   = ""
 tdjson_path = "tdjson.dll"
+; auth_mode: qr (scan QR via Telegram app, default) or code (SMS/app code)
+auth_mode  = "qr"
